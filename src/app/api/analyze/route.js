@@ -6,23 +6,24 @@ export const runtime = "nodejs";
 
 const JSON_FALLBACK = {
   product: {
-    name: "غير معروف",
-    brand: "غير معروف",
-    category: "مكياج",
-    description: "لم نتمكن من استخراج تفاصيل كافية.",
+    name: "Unknown",
+    brand: "Unknown",
+    category: "Makeup",
+    description: "Not enough product details were found.",
   },
   popularity: {
-    country: "غير معروف",
-    city: "غير معروف",
-    reason: "لا توجد بيانات كافية.",
+    country: "Unknown",
+    city: "Unknown",
+    reason: "Not enough popularity data was found.",
   },
   stores: [],
   dupe: {
-    name: "غير معروف",
-    brand: "غير معروف",
+    name: "Unknown",
+    brand: "Unknown",
     match: 0,
-    reason: "لا يوجد بديل موثوق.",
+    reason: "No reliable alternative was found.",
   },
+  tips: [],
 };
 
 function extractJson(text) {
@@ -55,6 +56,30 @@ function imageContentFromDataUrl(dataUrl) {
   };
 }
 
+function normalizeUnclearImageResult(result) {
+  return {
+    ...result,
+    product: {
+      ...(result.product || {}),
+      name: "غير واضح من الصورة",
+      brand: "غير واضح من الصورة",
+      category: result.product?.category || "مكياج",
+      description: "لم أستطع قراءة اسم المنتج أو البراند من الصورة بوضوح.",
+    },
+    stores: [],
+    dupe: {
+      name: "غير واضح",
+      brand: "غير واضح",
+      match: 0,
+      reason: "لا يمكن اقتراح بديل موثوق بدون تحديد المنتج الأصلي.",
+    },
+    tips: [
+      "صوري واجهة العبوة من قريب وبإضاءة واضحة.",
+      "تأكدي أن اسم البراند واسم المنتج والدرجة ظاهرين في الصورة.",
+    ],
+  };
+}
+
 export async function POST(request) {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -68,11 +93,15 @@ export async function POST(request) {
     const imageContent = imageContentFromDataUrl(body.imageData);
 
     if (!query && !imageContent) {
-      return NextResponse.json({ error: "اكتبي اسم المنتج أو ارفعي صورته." }, { status: 400 });
+      return NextResponse.json({ error: "Enter a product name or upload a product photo." }, { status: 400 });
     }
 
-    const prompt = `أنت محللة مكياج عربية لتطبيق Glowva. استخدمي البحث على الويب عند الحاجة.
-المطلوب إرجاع JSON صالح فقط بدون Markdown وبالمفاتيح التالية:
+    const modeInstruction = imageContent
+      ? `The user uploaded a product image. Be conservative: identify the product only from visible packaging, logo, label text, shade names, or unmistakable product shape. Do not guess a brand or product from color, packaging style, or popularity alone. If the label is blurry, cropped, hidden, or unreadable, set product.name and product.brand to "غير واضح من الصورة", set dupe.match to 0, leave stores as an empty array, and use tips to ask for a clearer front-facing photo showing the product name.`
+      : `The user provided a product name. Analyze that named product.`;
+
+    const prompt = `You are Glowva's Arabic makeup analyst.
+Return valid JSON only, with no Markdown, using exactly this shape:
 {
   "product": {"name": "", "brand": "", "category": "", "description": "", "shade": ""},
   "popularity": {"country": "", "city": "", "reason": ""},
@@ -80,12 +109,10 @@ export async function POST(request) {
   "dupe": {"name": "", "brand": "", "match": 0, "url": "", "reason": ""},
   "tips": []
 }
-اختاري 3 متاجر خليجية فقط من: نون، أمازون السعودية، Golden Scent، Nice One، سيفورا. ضعي روابط شراء مباشرة أو روابط بحث موثوقة. اجعلي اللغة عربية مختصرة وودية.`;
+${modeInstruction}
+Write every user-facing value in clear, natural Arabic. Only pick stores when you are confident about the exact product. Pick up to 3 Gulf stores from Noon, Amazon Saudi, Golden Scent, Nice One, and Sephora. Use direct purchase links or reliable search links. Keep the tone concise and friendly.`;
 
-    const content = [
-      { type: "text", text: `${prompt}\n\nمدخل المستخدمة: ${query || "صورة منتج مرفقة"}` },
-    ];
-
+    const content = [{ type: "text", text: `${prompt}\n\nUser input: ${query || "Attached product photo"}` }];
     if (imageContent) content.push(imageContent);
 
     const anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
@@ -98,14 +125,7 @@ export async function POST(request) {
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: 1600,
-        temperature: 0.2,
-        tools: [
-          {
-            type: "web_search_20250305",
-            name: "web_search",
-            max_uses: 5,
-          },
-        ],
+        temperature: 0,
         messages: [{ role: "user", content }],
       }),
     });
@@ -114,32 +134,48 @@ export async function POST(request) {
 
     if (!anthropicResponse.ok) {
       console.error("Anthropic analyze failed", anthropicJson);
-      return NextResponse.json({ error: "تعذر تحليل المنتج الآن." }, { status: 502 });
+      return NextResponse.json({ error: "Product analysis is unavailable right now." }, { status: 502 });
     }
 
     const text = (anthropicJson.content || [])
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join("\n");
-    const result = extractJson(text);
+    let result = extractJson(text);
 
-    const supabase = getSupabaseServiceClient();
-    const productName = result.product?.name || query || "unknown";
-    const { error } = await supabase.from("searches").insert({
-      product_name: productName,
-      query: query || productName,
-      country,
-      city,
-      result,
-    });
+    if (imageContent && !query) {
+      const productName = String(result.product?.name || "").trim().toLowerCase();
+      const brandName = String(result.product?.brand || "").trim().toLowerCase();
+      const isUnclear =
+        !productName ||
+        !brandName ||
+        productName === "unknown" ||
+        brandName === "unknown" ||
+        productName.includes("غير واضح") ||
+        brandName.includes("غير واضح");
 
-    if (error) {
-      console.error("Supabase search insert failed", error);
+      if (isUnclear) result = normalizeUnclearImageResult(result);
+    }
+
+    try {
+      const supabase = getSupabaseServiceClient();
+      const productName = result.product?.name || query || "unknown";
+      const { error } = await supabase.from("searches").insert({
+        product_name: productName,
+        query: query || productName,
+        country,
+        city,
+        result,
+      });
+
+      if (error) console.warn("Supabase search insert skipped", error.message);
+    } catch (storageError) {
+      console.warn("Supabase search storage skipped", storageError.message);
     }
 
     return NextResponse.json({ result });
   } catch (error) {
     console.error("Analyze endpoint failed", error);
-    return NextResponse.json({ error: "حدث خطأ غير متوقع." }, { status: 500 });
+    return NextResponse.json({ error: "Unexpected analysis error." }, { status: 500 });
   }
 }
