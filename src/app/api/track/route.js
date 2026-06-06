@@ -17,13 +17,10 @@ export async function POST(request) {
       user_agent: request.headers.get("user-agent") || null,
     });
 
-    if (error) {
-      console.error("Supabase visit insert failed", error);
-    }
-
+    if (error) console.warn("Supabase visit insert skipped", error.message);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error("Track endpoint failed", error);
-    return NextResponse.json({ ok: false }, { status: 500 });
+    console.warn("Track endpoint skipped", error.message);
+    return NextResponse.json({ ok: true });
   }
 }
