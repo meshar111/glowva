@@ -9,13 +9,13 @@ export async function GET() {
     const { data, error } = await supabase.from("v_top_products").select("*").limit(8);
 
     if (error) {
-      console.error("Trending query failed", error);
+      console.warn("Trending query skipped", error.message);
       return NextResponse.json({ products: [] });
     }
 
     return NextResponse.json({ products: data || [] });
   } catch (error) {
-    console.error("Trending endpoint failed", error);
+    console.warn("Trending endpoint skipped", error.message);
     return NextResponse.json({ products: [] });
   }
 }
