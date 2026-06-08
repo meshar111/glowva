@@ -1,7 +1,30 @@
 import { NextResponse } from "next/server";
-import { getSupabaseServiceClient } from "@/lib/supabaseServer";
+import { createClient } from "@supabase/supabase-js";
+import { getCookieUser } from "@/lib/supabaseAuth";
 
 export const runtime = "nodejs";
+
+function createSupabaseClient(key) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!url || !key) {
+    throw new Error("Missing Supabase environment variables");
+  }
+
+  return createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
+
+function getPublicClient() {
+  return createSupabaseClient(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+}
+
+function getDataClient() {
+  return createSupabaseClient(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+}
 
 async function getCount(supabase, table, options = {}) {
   const query = supabase.from(table).select("*", { count: "exact", head: true });
@@ -23,20 +46,34 @@ async function getRows(supabase, table, select = "*", limit = 20) {
 }
 
 async function getUserCount(supabase) {
-  let page = 1;
-  let total = 0;
+  try {
+    let page = 1;
+    let total = 0;
 
-  while (page < 100) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
-    if (error) throw error;
+    while (page < 100) {
+      const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
+      if (error) throw error;
 
-    const users = data?.users || [];
-    total += users.length;
-    if (users.length < 1000) break;
-    page += 1;
+      const users = data?.users || [];
+      total += users.length;
+      if (users.length < 1000) break;
+      page += 1;
+    }
+
+    return total;
+  } catch {
+    return getCount(supabase, "profiles");
   }
+}
 
-  return total;
+function getFunnelCount(rows, labels) {
+  const needles = labels.map((label) => label.toLowerCase());
+  const row = rows.find((item) => {
+    const label = String(item.label || item.step || item.name || "").toLowerCase();
+    return needles.some((needle) => label.includes(needle));
+  });
+
+  return row?.count || row?.total || row?.value || row?.visits || row?.searches || 0;
 }
 
 export async function GET(request) {
@@ -46,17 +83,19 @@ export async function GET(request) {
       return NextResponse.json({ error: "ADMIN_EMAIL is not configured" }, { status: 500 });
     }
 
+    let user = await getCookieUser();
     const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!user && token) {
+      const authClient = getPublicClient();
+      const { data } = await authClient.auth.getUser(token);
+      user = data?.user || null;
     }
 
-    const supabase = getSupabaseServiceClient();
-    const { data: userData, error: userError } = await supabase.auth.getUser(token);
-    if (userError || !userData?.user || userData.user.email?.toLowerCase() !== adminEmail.toLowerCase()) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    if (!user || user.email?.toLowerCase() !== adminEmail.toLowerCase()) {
+      return NextResponse.json({ error: "غير مصرّح" }, { status: 403 });
     }
 
+    const supabase = getDataClient();
     const warnings = [];
     const safe = async (label, fallback, fn) => {
       try {
@@ -67,7 +106,7 @@ export async function GET(request) {
       }
     };
 
-    const [visits, searches, users, subscribers, topProducts, countries, cities, dailySearches, funnel] =
+    const [directVisits, directSearches, users, subscribers, topProducts, countries, cities, dailySearches, funnel] =
       await Promise.all([
         safe("visits", 0, () => getCount(supabase, "visits")),
         safe("searches", 0, () => getCount(supabase, "searches")),
@@ -80,8 +119,16 @@ export async function GET(request) {
         safe("v_funnel", [], () => getRows(supabase, "v_funnel", "*", 12)),
       ]);
 
+    const visits = directVisits || getFunnelCount(funnel, ["زيارات", "visits", "visit"]);
+    const searches = directSearches || getFunnelCount(funnel, ["بحث", "searches", "search"]);
+
     return NextResponse.json({
-      totals: { visits, searches, users, subscribers },
+      totals: {
+        visits,
+        searches,
+        users,
+        subscribers,
+      },
       topProducts,
       countries,
       cities,
@@ -91,6 +138,6 @@ export async function GET(request) {
     });
   } catch (error) {
     console.error("Admin stats failed", error);
-    return NextResponse.json({ error: "Admin dashboard failed" }, { status: 500 });
+    return NextResponse.json({ error: "تعذر تحميل لوحة الأدمن" }, { status: 500 });
   }
 }

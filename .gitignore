@@ -11,3 +11,6 @@ pnpm-debug.log*
 .vercel
 .git-work
 *.tsbuildinfo
+
+.env*
+!.env.example
