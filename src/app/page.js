@@ -111,19 +111,18 @@ export default function Home() {
       .then((data) => {
         if (!mounted) return;
         setSession(data.user ? { user: data.user } : null);
-        setProfile(data.profile);
+        setProfile(data.user ? data.profile : null);
       })
-      .catch(() => setSession(null));
+      .catch(() => {
+        setSession(null);
+        setProfile(null);
+      });
 
     return () => {
       mounted = false;
       subscription?.unsubscribe();
     };
   }, []);
-
-  useEffect(() => {
-    if (!session?.user) setProfile(null);
-  }, [session]);
 
   async function handleImage(file) {
     if (!file) return;
@@ -272,7 +271,10 @@ export default function Home() {
                   <Upload className="h-9 w-9" />
                   <span className="text-base font-extrabold">{imageName || "ارفعي صورة المنتج"}</span>
                 </button>
-                {imageData && <img src={imageData} alt="صورة المنتج" className="mt-4 h-56 w-full rounded-3xl object-cover soft-ring" />}
+                {imageData && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={imageData} alt="صورة المنتج" className="mt-4 h-56 w-full rounded-3xl object-cover soft-ring" />
+                )}
               </div>
             )}
 
