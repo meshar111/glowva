@@ -25,12 +25,50 @@ export async function enforceUsageLimit({ supabase, request, eventType, actorTyp
     p_limit: limit,
   });
 
-  if (error) throw error;
+  if (error) {
+    if (/enforce_usage_limit|schema cache|function/i.test(error.message || "")) {
+      return enforceUsageLimitFallback({ supabase, eventType, actorType, actorId, ip, limit });
+    }
+    throw error;
+  }
   const row = Array.isArray(data) ? data[0] : data;
   return {
     allowed: Boolean(row?.allowed),
     limit,
     remaining: Math.max(Number(row?.remaining || 0), 0),
+  };
+}
+
+async function enforceUsageLimitFallback({ supabase, eventType, actorType, actorId, ip, limit }) {
+  const since = windowStart();
+  const fallbackActorType = ["ip", "user"].includes(actorType) ? actorType : "ip";
+  const fallbackActorId = ["ip", "user"].includes(actorType) ? actorId : `${actorType}:${actorId}`;
+
+  const { count, error: countError } = await supabase
+    .from("usage_events")
+    .select("*", { count: "exact", head: true })
+    .eq("event_type", eventType)
+    .eq("actor_type", fallbackActorType)
+    .eq("actor_id", fallbackActorId)
+    .gte("created_at", since);
+
+  if (countError) throw countError;
+  if ((count || 0) >= limit) {
+    return { allowed: false, limit, remaining: 0 };
+  }
+
+  const { error: insertError } = await supabase.from("usage_events").insert({
+    event_type: eventType,
+    actor_type: fallbackActorType,
+    actor_id: fallbackActorId,
+    ip,
+  });
+  if (insertError) throw insertError;
+
+  return {
+    allowed: true,
+    limit,
+    remaining: Math.max(limit - (count || 0) - 1, 0),
   };
 }
 
