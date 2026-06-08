@@ -2,7 +2,7 @@ import crypto from "crypto";
 
 export function cacheKeyFor({ query, imageData }) {
   const imageHash = imageData
-    ? crypto.createHash("sha256").update(imageData.slice(0, 256_000)).digest("hex")
+    ? crypto.createHash("sha256").update(imageData).digest("hex")
     : "";
   return crypto
     .createHash("sha256")

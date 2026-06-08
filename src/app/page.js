@@ -104,7 +104,6 @@ export default function Home() {
 
   useEffect(() => {
     let mounted = true;
-    let subscription;
 
     fetch("/api/auth/session")
       .then((response) => response.json())
@@ -120,7 +119,6 @@ export default function Home() {
 
     return () => {
       mounted = false;
-      subscription?.unsubscribe();
     };
   }, []);
 
@@ -184,11 +182,9 @@ export default function Home() {
 
     setLoading(true);
     try {
-      const headers = { "content-type": "application/json" };
-
       const response = await fetch("/api/analyze", {
         method: "POST",
-        headers,
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           query,
           imageData: mode === "photo" ? imageData : "",
@@ -212,7 +208,7 @@ export default function Home() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden px-4 py-6 sm:px-6 lg:px-10">
+    <main className="relative min-h-screen px-4 py-6 sm:px-6 lg:px-10">
       <div className="relative mx-auto flex max-w-6xl flex-col gap-6">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -402,9 +398,7 @@ function Plan({ title, price, cadence, featured, plan, session, setError }) {
       }
       const response = await fetch("/api/payments/checkout", {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ plan }),
       });
       const data = await response.json();

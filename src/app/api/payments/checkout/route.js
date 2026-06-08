@@ -13,6 +13,22 @@ function getAuthClient() {
   });
 }
 
+function getSafeOrigin(request) {
+  const configured = process.env.NEXT_PUBLIC_SITE_URL || "https://glowva-peach.vercel.app";
+  const origin = request.headers.get("origin");
+  if (!origin) return configured;
+
+  try {
+    const originUrl = new URL(origin);
+    const configuredUrl = new URL(configured);
+    if (originUrl.hostname === configuredUrl.hostname || originUrl.hostname.endsWith(".vercel.app")) {
+      return origin;
+    }
+  } catch {}
+
+  return configured;
+}
+
 export async function POST(request) {
   try {
     let user = await getCookieUser();
@@ -24,11 +40,15 @@ export async function POST(request) {
     if (!user?.email) return jsonError("سجلي الدخول أولاً.", 401);
 
     const { plan = "monthly" } = await request.json().catch(() => ({}));
+    if (!["monthly", "yearly"].includes(plan)) {
+      return jsonError("خطة الاشتراك غير صحيحة.", 400);
+    }
+
     const priceId =
       plan === "yearly" ? requireEnv("STRIPE_YEARLY_PRICE_ID") : requireEnv("STRIPE_MONTHLY_PRICE_ID");
 
     const stripe = new Stripe(requireEnv("STRIPE_SECRET_KEY"));
-    const origin = request.headers.get("origin") || process.env.NEXT_PUBLIC_SITE_URL || "https://glowva-peach.vercel.app";
+    const origin = getSafeOrigin(request);
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer_email: user.email,

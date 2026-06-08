@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSupabaseCookieClient } from "@/lib/supabaseAuth";
+import { safeInternalPath } from "@/lib/security";
 
 export async function GET(request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
-  const next = url.searchParams.get("next") || "/";
+  const next = safeInternalPath(url.searchParams.get("next") || "/");
 
   if (code) {
     const supabase = await getSupabaseCookieClient();

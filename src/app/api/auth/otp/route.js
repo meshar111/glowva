@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
+import { enforceOtpLimit } from "@/lib/rateLimit";
+import { jsonError, safeInternalPath } from "@/lib/security";
 import { getSupabaseCookieClient } from "@/lib/supabaseAuth";
-import { jsonError } from "@/lib/security";
+import { getSupabaseServiceClient } from "@/lib/supabaseServer";
+
+export const runtime = "nodejs";
 
 export async function POST(request) {
   const { email, next = "/" } = await request.json().catch(() => ({}));
@@ -9,12 +13,22 @@ export async function POST(request) {
     return jsonError("اكتبي بريد إلكتروني صحيح.", 400);
   }
 
+  const limit = await enforceOtpLimit({
+    supabase: getSupabaseServiceClient(),
+    request,
+    email: normalizedEmail,
+  });
+  if (!limit.allowed) {
+    return jsonError("طلبات تسجيل الدخول كثيرة. جرّبي لاحقاً.", 429);
+  }
+
   const url = new URL(request.url);
+  const redirectPath = safeInternalPath(next);
   const supabase = await getSupabaseCookieClient();
   const { error } = await supabase.auth.signInWithOtp({
     email: normalizedEmail,
     options: {
-      emailRedirectTo: `${url.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+      emailRedirectTo: `${url.origin}/auth/callback?next=${encodeURIComponent(redirectPath)}`,
     },
   });
 

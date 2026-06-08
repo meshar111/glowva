@@ -8,14 +8,10 @@ export async function GET() {
     const supabase = getSupabaseServiceClient();
     const { data, error } = await supabase.from("v_top_products").select("*").limit(8);
 
-    if (error) {
-      console.warn("Trending query skipped", error.message);
-      return NextResponse.json({ products: [] });
-    }
-
+    if (error) throw error;
     return NextResponse.json({ products: data || [] });
   } catch (error) {
-    console.warn("Trending endpoint skipped", error.message);
-    return NextResponse.json({ products: [] });
+    console.error("Trending endpoint failed", { message: error.message });
+    return NextResponse.json({ error: "تعذر تحميل الترند", products: [] }, { status: 500 });
   }
 }

@@ -42,11 +42,22 @@ create table if not exists public.usage_events (
   actor_id text not null,
   ip text,
   created_at timestamptz not null default now(),
-  constraint usage_events_actor_type_check check (actor_type in ('ip', 'user'))
+  constraint usage_events_actor_type_check check (actor_type in ('ip', 'user', 'email'))
 );
 
 create index if not exists usage_events_actor_window_idx
   on public.usage_events (event_type, actor_type, actor_id, created_at desc);
+
+create table if not exists public.usage_counters (
+  event_type text not null,
+  actor_type text not null,
+  actor_id text not null,
+  window_start timestamptz not null,
+  count int not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (event_type, actor_type, actor_id, window_start),
+  constraint usage_counters_actor_type_check check (actor_type in ('ip', 'user', 'email'))
+);
 
 create table if not exists public.analysis_cache (
   cache_key text primary key,
@@ -71,6 +82,7 @@ alter table public.profiles enable row level security;
 alter table public.visits enable row level security;
 alter table public.searches enable row level security;
 alter table public.usage_events enable row level security;
+alter table public.usage_counters enable row level security;
 alter table public.analysis_cache enable row level security;
 alter table public.payment_events enable row level security;
 
@@ -87,6 +99,9 @@ create policy "profiles_insert_own_safe" on public.profiles
     and coalesce(is_subscribed, false) = false
     and coalesce(plan, 'free') = 'free'
     and coalesce(subscription_status, 'inactive') = 'inactive'
+    and subscription_provider is null
+    and subscription_customer_id is null
+    and subscription_id is null
   );
 
 drop policy if exists "profiles_update_own_non_subscription" on public.profiles;
@@ -125,6 +140,12 @@ create policy "usage_events_no_client_access" on public.usage_events
   using (false)
   with check (false);
 
+drop policy if exists "usage_counters_no_client_access" on public.usage_counters;
+create policy "usage_counters_no_client_access" on public.usage_counters
+  for all to anon, authenticated
+  using (false)
+  with check (false);
+
 drop policy if exists "analysis_cache_no_client_access" on public.analysis_cache;
 create policy "analysis_cache_no_client_access" on public.analysis_cache
   for all to anon, authenticated
@@ -137,8 +158,54 @@ create policy "payment_events_no_client_access" on public.payment_events
   using (false)
   with check (false);
 
+create or replace function public.enforce_usage_limit(
+  p_event_type text,
+  p_actor_type text,
+  p_actor_id text,
+  p_ip text,
+  p_window_start timestamptz,
+  p_limit int
+)
+returns table (allowed boolean, remaining int)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_count int;
+begin
+  if p_limit < 1 then
+    return query select false, 0;
+    return;
+  end if;
+
+  insert into public.usage_counters (event_type, actor_type, actor_id, window_start, count)
+  values (p_event_type, p_actor_type, p_actor_id, p_window_start, 1)
+  on conflict (event_type, actor_type, actor_id, window_start)
+  do update
+    set count = public.usage_counters.count + 1,
+        updated_at = now()
+  returning count into current_count;
+
+  if current_count > p_limit then
+    return query select false, 0;
+    return;
+  end if;
+
+  insert into public.usage_events (event_type, actor_type, actor_id, ip)
+  values (p_event_type, p_actor_type, p_actor_id, p_ip);
+
+  return query select true, greatest(p_limit - current_count, 0);
+end;
+$$;
+
+revoke all on function public.enforce_usage_limit(text, text, text, text, timestamptz, int) from public;
+revoke all on function public.enforce_usage_limit(text, text, text, text, timestamptz, int) from anon;
+revoke all on function public.enforce_usage_limit(text, text, text, text, timestamptz, int) from authenticated;
+grant execute on function public.enforce_usage_limit(text, text, text, text, timestamptz, int) to service_role;
+
 create or replace view public.v_top_products
-with (security_invoker = false)
+with (security_invoker = true)
 as
 select product_name, count(*)::int as search_count
 from public.searches
@@ -148,7 +215,7 @@ order by search_count desc
 limit 20;
 
 create or replace view public.v_by_country
-with (security_invoker = false)
+with (security_invoker = true)
 as
 select coalesce(country, 'unknown') as country, count(*)::int as count
 from public.visits
@@ -156,7 +223,7 @@ group by coalesce(country, 'unknown')
 order by count desc;
 
 create or replace view public.v_by_city
-with (security_invoker = false)
+with (security_invoker = true)
 as
 select coalesce(city, 'unknown') as city, count(*)::int as count
 from public.visits
@@ -164,7 +231,7 @@ group by coalesce(city, 'unknown')
 order by count desc;
 
 create or replace view public.v_daily_searches
-with (security_invoker = false)
+with (security_invoker = true)
 as
 select date_trunc('day', created_at)::date as day, count(*)::int as search_count
 from public.searches
@@ -172,7 +239,7 @@ group by date_trunc('day', created_at)::date
 order by day asc;
 
 create or replace view public.v_funnel
-with (security_invoker = false)
+with (security_invoker = true)
 as
 select 'زيارات' as label, count(*)::int as count from public.visits
 union all
@@ -182,8 +249,8 @@ select 'مشتركين' as label, count(*)::int as count
 from public.profiles
 where is_subscribed = true;
 
-grant select on public.v_top_products to anon, authenticated;
-grant select on public.v_by_country to anon, authenticated;
-grant select on public.v_by_city to anon, authenticated;
-grant select on public.v_daily_searches to anon, authenticated;
-grant select on public.v_funnel to anon, authenticated;
+revoke all on public.v_top_products from anon, authenticated;
+revoke all on public.v_by_country from anon, authenticated;
+revoke all on public.v_by_city from anon, authenticated;
+revoke all on public.v_daily_searches from anon, authenticated;
+revoke all on public.v_funnel from anon, authenticated;

@@ -1,29 +1,18 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireEnv } from "@/lib/env";
 import { getCookieUser } from "@/lib/supabaseAuth";
+import { getSupabaseServiceClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 
-function createSupabaseClient(key) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!url || !key) {
-    throw new Error("Missing Supabase environment variables");
-  }
-
-  return createClient(url, key, {
+function getPublicClient() {
+  return createClient(requireEnv("NEXT_PUBLIC_SUPABASE_URL"), requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
     },
   });
-}
-
-function getPublicClient() {
-  return createSupabaseClient(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-}
-
-function getDataClient() {
-  return createSupabaseClient(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 }
 
 async function getCount(supabase, table, options = {}) {
@@ -78,24 +67,20 @@ function getFunnelCount(rows, labels) {
 
 export async function GET(request) {
   try {
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (!adminEmail) {
-      return NextResponse.json({ error: "ADMIN_EMAIL is not configured" }, { status: 500 });
-    }
+    const adminEmail = requireEnv("ADMIN_EMAIL");
 
     let user = await getCookieUser();
     const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
     if (!user && token) {
-      const authClient = getPublicClient();
-      const { data } = await authClient.auth.getUser(token);
+      const { data } = await getPublicClient().auth.getUser(token);
       user = data?.user || null;
     }
 
     if (!user || user.email?.toLowerCase() !== adminEmail.toLowerCase()) {
-      return NextResponse.json({ error: "غير مصرّح" }, { status: 403 });
+      return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
     }
 
-    const supabase = getDataClient();
+    const supabase = getSupabaseServiceClient();
     const warnings = [];
     const safe = async (label, fallback, fn) => {
       try {

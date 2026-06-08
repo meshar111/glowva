@@ -5,7 +5,7 @@ import { Lock, LogIn } from "lucide-react";
 
 export default function DashboardLogin() {
   const [email, setEmail] = useState("");
-  const [message, setMessage] = useState("غير مصرّح");
+  const [message, setMessage] = useState("غير مصرح");
 
   async function signIn() {
     if (!email.trim()) {
@@ -28,9 +28,9 @@ export default function DashboardLogin() {
         <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-pink-100 text-pink-700">
           <Lock className="h-7 w-7" />
         </div>
-        <h1 className="text-2xl font-extrabold text-pink-950">غير مصرّح</h1>
+        <h1 className="text-2xl font-extrabold text-pink-950">غير مصرح</h1>
         <p className="mt-2 text-sm font-medium leading-7 text-pink-950/65">
-          لوحة Glowva تظهر فقط لحساب الأدمن المصرّح له.
+          لوحة Glowva تظهر فقط لحساب الأدمن المصرح له.
         </p>
         <div className="mt-5 flex flex-col gap-3">
           <input
